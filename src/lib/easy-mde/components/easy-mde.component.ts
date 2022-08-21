@@ -20,8 +20,17 @@ import {ControlValueAccessor, NG_VALUE_ACCESSOR} from '@angular/forms';
 import {map, Subject, Subscription, take} from "rxjs";
 import {iconClassMap} from "../utils/easymd-fonts";
 import * as EasyMDE from "easymde"
-import  {Options, toggleBold} from "easymde"
+import {
+  drawLink,
+  Options, toggleBlockquote,
+  toggleBold, toggleCodeBlock,
+  toggleHeadingBigger,
+  toggleHeadingSmaller,
+  toggleItalic, toggleOrderedList, togglePreview, toggleSideBySide,
+  toggleStrikethrough, toggleUnorderedList
+} from "easymde"
 import {EasyMdeConfig} from "../utils/config";
+import {EditorConfiguration} from "codemirror";
 
 @Component({
   selector: 'easy-mde',
@@ -38,22 +47,86 @@ import {EasyMdeConfig} from "../utils/config";
 })
 export class EasyMdeComponent implements AfterViewInit, OnChanges, OnDestroy, ControlValueAccessor {
   @ViewChild('easyMarkDownEditor') private _elRef?: ElementRef;
+  private _instance?: EasyMDE;
   private _value = "";
   private _viewReady$ = new Subject();
-  private _instance = this._viewReady$.pipe(
-    map(() => this._init())
+  public  _ready$ = this._viewReady$.asObservable().pipe(
+    take(1),
   );
 
   private _subscriptions: Subscription[] = [];
   @Input() options: Options = {
     autoDownloadFontAwesome: false,
     toolbar: [
+        {
+          name: "bold",
+          action: toggleBold,
+          className: iconClassMap.bold,
+          title: "Bold",
+        },
+        {
+          name: "italic",
+          action: toggleItalic,
+          className: iconClassMap.italic,
+          title: "Italics",
+        },
       {
-        name: "bold",
-        action: toggleBold,
-        className: iconClassMap.bold,
-        title: "Bold",
-      }
+        name: "strikethrough",
+        action: toggleStrikethrough,
+        className: iconClassMap.strikethrough,
+        title: "Strikethrough",
+      },
+      '|',
+      {
+        name: "header-smaller",
+        action: toggleHeadingSmaller,
+        className: iconClassMap["heading-smaller"],
+        title: "Smaller Heading",
+      },
+      {
+        name: "heading-bigger",
+        action: toggleHeadingBigger,
+        className: iconClassMap["heading-bigger"],
+        title: "Heading Bigger",
+      },
+      {
+        name: "code-block",
+        action: toggleCodeBlock,
+        className: iconClassMap.code,
+        title: "code-block",
+      },
+      '|',
+      {
+        name: "blockquote",
+        action: toggleBlockquote,
+        className: iconClassMap.quote,
+        title: "Blockquote",
+      },
+      {
+        name: "unordered-list",
+        action: toggleUnorderedList,
+        className: iconClassMap['unordered-list'],
+        title: "Unordered List",
+      },
+      {
+        name: "ordered-list",
+        action: toggleOrderedList,
+        className: iconClassMap["ordered-list"],
+        title: "Ordered List",
+      },
+      '|',
+      {
+        name: "link",
+        action: drawLink,
+        className: iconClassMap["link"],
+        title: "Link",
+      },
+      {
+        name: "preview",
+        action: togglePreview,
+        className: iconClassMap["preview"],
+        title: "Preview",
+      },
     ]
   };
   @Input() disabled = false;
@@ -61,18 +134,24 @@ export class EasyMdeComponent implements AfterViewInit, OnChanges, OnDestroy, Co
   @Output() onChange: EventEmitter<string> = new EventEmitter<string>();
   @Output() onBlur: EventEmitter<string> = new EventEmitter<string>();
 
-  private _runOnReady(fn: (instance: EasyMDE) => any) {
-    this._instance.pipe(
-      take(1),
-      map((instance) => fn(instance))).subscribe();
+  get Instance(): EasyMDE|undefined {
+    return this._instance;
+  }
+
+  private _runOnReady(fn: any) {
+    this._ready$.pipe(take(1), map(() => {
+      if (this._instance) {
+        fn(this._instance)
+      }
+    })).subscribe();
   }
 
   /**
    * Call [setOption](https://codemirror.net/doc/manual.html#setOption) method
    * of Codemirror.
    */
-  setOptions(option: string, value: any): void {
-    this._runOnReady((instance) =>
+  setOptions(option: keyof EditorConfiguration, value: any): void {
+    this._runOnReady((instance: EasyMDE) =>
       instance.codemirror.setOption(option, value)
     )
   }
@@ -85,18 +164,19 @@ export class EasyMdeComponent implements AfterViewInit, OnChanges, OnDestroy, Co
   }
 
   registerOnChange(fn: any): void {
-    this._runOnReady((instance) =>
+    this._runOnReady((instance: EasyMDE) =>
       instance.codemirror.on('change', fn)
     );
   }
 
   registerOnTouched(fn: any): void {
-    this._runOnReady((instance) =>
+    this._runOnReady((instance: EasyMDE) =>
       instance.codemirror.on('blur', fn)
     )
   }
 
   private _init() {
+    this.destroy();
     const options: Options = {
       ...this.options,
       };
@@ -113,28 +193,32 @@ export class EasyMdeComponent implements AfterViewInit, OnChanges, OnDestroy, Co
         });
       });
       instance.codemirror.on('change', () => {
-        this._value = this._instance.value();
+        this._value = this._instance?.value() ?? '';
         this._zone.run(() => {
           this.onChange.emit(this._value);
         });
       });
       this.setDisable();
-      return instance;
+
   }
 
   private destroy() {
-    this._runOnReady((instance) => {
-      instance.toTextArea();
-    })
+    if (this._instance) {
+      this._instance.toTextArea();
+      this._instance = undefined;
+    }
   }
 
   private setDisable() {
-    this._runOnReady((instance) => instance.codemirror.options.readOnly = this.disabled )
+    this._zone.runOutsideAngular(() => {
+      if (this._instance?.codemirror)
+        this._instance?.codemirror?.setOption('readOnly', true)
+    });
   }
 
   ngAfterViewInit() {
+    this._init();
     this._viewReady$.next(true);
-    this._subscriptions.push(this._viewReady$.subscribe());
   }
 
   ngOnChanges(changes: { [P in keyof this]?: SimpleChange } & SimpleChanges) {
@@ -150,9 +234,9 @@ export class EasyMdeComponent implements AfterViewInit, OnChanges, OnDestroy, Co
 
   writeValue(value: string): void {
     this._value = value;
-    this._runOnReady((instance) => {
-      instance.value(this._value);
-    })
+    if (this._instance) {
+      this._instance.value(this._value);
+    }
   }
 
   setDisabledState(isDisabled: boolean): void {
